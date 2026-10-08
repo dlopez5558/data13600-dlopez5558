@@ -3,6 +3,7 @@ import sys
 import csv
 
 filename = sys.argv[1]
+x = 0
 
 with open(filename, newline="") as file:
     reader = csv.reader(file)
