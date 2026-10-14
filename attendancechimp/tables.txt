@@ -1,0 +1,4 @@
+auth_group                 auth_user_groups               django_migrations
+auth_group_permissions     auth_user_user_permissions     django_session
+auth_permission            django_admin_log
+auth_user                  django_content_type
