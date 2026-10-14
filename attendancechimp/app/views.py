@@ -42,8 +42,8 @@ def time_view(request):
 
 
 def sum_view(request):
-    return JsonResponse({"sum": float(request.GET.get('n1')) +
-                         float(request.GET.get('n2'))})
+    return HttpResponse(f"<p>{float(request.GET.get('n1')) + float(request.GET.get('n2'))}</p>"
+    )
 
 
 # ---------------------------------------------------------------------------
