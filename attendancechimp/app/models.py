@@ -42,9 +42,12 @@ class Instructor_Profile(models.Model):
         validators=[MinLengthValidator(8)],
         primary_key=True,
     )
-    instructor_name = models.CharField(max_length=20)
+    instructor_name = models.CharField(max_length=20)    
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+    )
     
-
 class Student_Profile(models.Model):
     '''
     Table linking students to there IDs
@@ -55,7 +58,10 @@ class Student_Profile(models.Model):
         primary_key=True,
     )
     student_name = models.CharField(max_length=20)
-
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+    )
 
 # ---------------------------------------------------------------------------
 # Course
@@ -143,6 +149,8 @@ class QRCodeUpload(models.Model):
                                 blank = True      
                               )
     attended = models.BooleanField(default=False)
+    image = models.FileField(upload_to="qr_uploads/")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         '''
