@@ -13,7 +13,13 @@
 <div class="bio">
     <h1>AttendanceChimp</h1>
     <p>Electronic class attendance tracking application.</p>
-    <hr>
+    {% if user.is_authenticated %}
+    <p class="username">{{ user.username }}</p>
+{% else %}
+    <p>Not logged in.</p>
+{% endif %}
+
+<p>Current time: {{ current_time }}</p><hr>
 
 </div>
 </body>
