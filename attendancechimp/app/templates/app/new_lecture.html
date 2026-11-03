@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<body>
+    <h1>Create a lecture</h1>
+
+    <form method="post" action="{% url 'createLecture' %}">
+        {% csrf_token %}
+
+        <p>
+            <label for="choice">Course:</label>
+            <select id="choice" name="choice" required>
+                <option value="">Select a course</option>
+                {% for course in courses %}
+                    <option value="{{ course.course_name }}">
+                        {{ course.course_name }}
+                    </option>
+                {% endfor %}
+            </select>
+        </p>
+
+        <p>
+            <label for="lecture-name">Lecture name:</label>
+            <input type="text" id="lecture-name" name="lecture-name"
+                   maxlength="20" required>
+        </p>
+
+        <p>
+            <label for="lecture-date">Lecture date and time (Chicago):</label>
+            <input type="datetime-local" id="lecture-date"
+                   name="lecture-date" required>
+        </p>
+
+        <button type="submit">Create lecture</button>
+    </form>
+</body>
+</html>

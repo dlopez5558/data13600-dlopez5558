@@ -171,3 +171,385 @@ class AttendanceModelTests(TestCase):
                     with self.assertRaises(ValidationError) as error:
                         obj.full_clean()
                     self.assertIn(field, error.exception.message_dict)
+
+
+
+import base64
+import tempfile
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
+from django.contrib.auth.models import User
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.urls import resolve, reverse
+
+from . import views
+from .models import (
+    Course, CourseMeeting, Enrollment, Instructor_Profile,
+    Lecture, QRCodeUpload, Student_Profile,
+)
+
+
+class AttendanceHW5Tests(TestCase):
+    password = "HW5-test-password-42"
+    chicago = ZoneInfo("America/Chicago")
+    endpoint_names = (
+        "createCourse", "createLecture", "createQRCodeUpload", "dumpUploads",
+    )
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.teacher_user = User.objects.create_user(
+            username="test_teacher", password=cls.password,
+        )
+        cls.teacher = Instructor_Profile.objects.create(
+            instructor_id="00000001", instructor_name="Test Teacher",
+            user=cls.teacher_user,
+        )
+        other_user = User.objects.create_user(
+            username="other_teacher", password=cls.password,
+        )
+        cls.other_teacher = Instructor_Profile.objects.create(
+            instructor_id="00000002", instructor_name="Other Teacher",
+            user=other_user,
+        )
+        # Names deliberately put the unsubmitted student first alphabetically.
+        cls.student_user = User.objects.create_user(
+            username="a_missing", password=cls.password,
+        )
+        cls.student = Student_Profile.objects.create(
+            student_id="00000003", student_name="Missing Student",
+            user=cls.student_user,
+        )
+        cls.second_user = User.objects.create_user(
+            username="z_uploaded", password=cls.password,
+        )
+        cls.second_student = Student_Profile.objects.create(
+            student_id="00000004", student_name="Uploaded Student",
+            user=cls.second_user,
+        )
+        cls.no_profile_user = User.objects.create_user(
+            username="no_profile", password=cls.password,
+        )
+        cls.course = Course.objects.create(
+            course_id="99990", course_name="Existing Course",
+            course_instructor=cls.teacher,
+        )
+        cls.other_course = Course.objects.create(
+            course_id="99989", course_name="Other Course",
+            course_instructor=cls.other_teacher,
+        )
+        for student in (cls.student, cls.second_student):
+            Enrollment.objects.create(student_id=student, course_id=cls.course)
+        cls.lecture = Lecture.objects.create(
+            lecture_name="Existing lecture",
+            lecture_date=datetime(2026, 11, 10, 9, 30, tzinfo=cls.chicago),
+            course_id=cls.course, qr_id="12345678",
+        )
+        cls.other_lecture = Lecture.objects.create(
+            lecture_name="Other lecture",
+            lecture_date=datetime(2026, 11, 10, 11, 0, tzinfo=cls.chicago),
+            course_id=cls.other_course, qr_id="87654321",
+        )
+        for student in (cls.student, cls.second_student):
+            QRCodeUpload.objects.create(
+                student_id=student, qr_id=cls.lecture, image="",
+                attended=False, uploaded_at=None,
+            )
+        # This record must not leak into the selected lecture's report.
+        QRCodeUpload.objects.create(
+            student_id=cls.student, qr_id=cls.other_lecture,
+            image="", attended=False, uploaded_at=None,
+        )
+
+    def setUp(self):
+        # Uploaded files are written here, never to the project's real media.
+        media = tempfile.TemporaryDirectory()
+        self.addCleanup(media.cleanup)
+        self.enterContext(self.settings(MEDIA_ROOT=media.name))
+
+    def login_as(self, user):
+        self.client.logout()
+        self.assertTrue(self.client.login(
+            username=user.username, password=self.password,
+        ))
+
+    def course_data(self, **changes):
+        data = {
+            "course-id": "99991", "course-name": "HW5 Test",
+            "start-time": "09:30", "end-time": "10:20",
+            "day-mon": "1", "day-wed": "1",
+        }
+        data.update(changes)
+        return data
+
+    def lecture_data(self, **changes):
+        data = {
+            "choice": self.course.course_name,
+            "lecture-name": "Newton's Laws",
+            "lecture-date": "2026-11-12T14:35",
+        }
+        data.update(changes)
+        return data
+
+    def image_file(self):
+        # A small PNG; QR decoding is intentionally outside this view's scope.
+        image = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lE"
+            "QVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
+        )
+        return SimpleUploadedFile("qr.png", image, content_type="image/png")
+
+    def assert_status(self, response, expected):
+        self.assertEqual(
+            response.status_code, expected,
+            response.content.decode(errors="replace")[:1000],
+        )
+
+    def test_endpoint_urls_and_view_mappings(self):
+        for name in self.endpoint_names:
+            with self.subTest(endpoint=name):
+                url = reverse(name)
+                self.assertEqual(url, f"/app/{name}")
+                self.assertEqual(resolve(url).func, getattr(views, name))
+
+    def test_builtin_login_page_and_session(self):
+        self.assert_status(self.client.get("/accounts/login/"), 200)
+        response = self.client.post("/accounts/login/", {
+            "username": self.teacher_user.username, "password": self.password,
+        })
+        # Django's built-in login redirects after successful authentication.
+        self.assert_status(response, 302)
+        self.assertEqual(
+            self.client.session.get("_auth_user_id"), str(self.teacher_user.pk),
+        )
+
+    def test_logged_out_users_receive_401(self):
+        for name in self.endpoint_names:
+            with self.subTest(endpoint=name):
+                method = self.client.get if name == "dumpUploads" else self.client.post
+                self.assert_status(method(reverse(name)), 401)
+
+    def test_wrong_roles_receive_401(self):
+        self.login_as(self.student_user)
+        for name in ("createCourse", "createLecture", "dumpUploads"):
+            with self.subTest(endpoint=name):
+                method = self.client.get if name == "dumpUploads" else self.client.post
+                self.assert_status(method(reverse(name)), 401)
+        self.login_as(self.teacher_user)
+        self.assert_status(self.client.post(reverse("createQRCodeUpload")), 401)
+
+    def test_user_without_profile_receives_401(self):
+        self.login_as(self.no_profile_user)
+        for name in self.endpoint_names:
+            with self.subTest(endpoint=name):
+                method = self.client.get if name == "dumpUploads" else self.client.post
+                self.assert_status(method(reverse(name)), 401)
+
+    def test_wrong_http_methods_are_rejected(self):
+        self.login_as(self.teacher_user)
+        for name in ("createCourse", "createLecture", "createQRCodeUpload"):
+            with self.subTest(endpoint=name):
+                self.assert_status(self.client.get(reverse(name)), 400)
+        self.assert_status(self.client.post(reverse("dumpUploads")), 400)
+
+    def test_create_course_saves_instructor_and_all_meeting_days(self):
+        self.login_as(self.teacher_user)
+        self.assert_status(self.client.post(
+            reverse("createCourse"), self.course_data(),
+        ), 200)
+        course = Course.objects.get(course_id="99991")
+        self.assertEqual(course.course_name, "HW5 Test")
+        self.assertEqual(course.course_instructor, self.teacher)
+        meetings = CourseMeeting.objects.filter(course=course).order_by("day")
+        self.assertEqual(list(meetings.values_list("day", flat=True)), ["mon", "wed"])
+        for meeting in meetings:
+            self.assertEqual(meeting.start_time, time(9, 30))
+            self.assertEqual(meeting.end_time, time(10, 20))
+
+    def test_create_course_rejects_duplicate_id_and_name(self):
+        self.login_as(self.teacher_user)
+        for changes in (
+            {"course-id": self.course.pk},
+            {"course-name": self.course.course_name},
+        ):
+            with self.subTest(changes=changes):
+                self.assert_status(self.client.post(
+                    reverse("createCourse"), self.course_data(**changes),
+                ), 400)
+        self.assertEqual(Course.objects.count(), 2)
+        self.assertEqual(CourseMeeting.objects.count(), 0)
+
+    def test_create_course_rejects_invalid_inputs_without_writes(self):
+        self.login_as(self.teacher_user)
+        invalid = [
+            {"course-id": "1234"}, {"course-id": "123456"},
+            {"course-name": ""}, {"course-name": "   "},
+            {"course-name": "x" * 21}, {"start-time": "invalid"},
+            {"end-time": ""}, {"end-time": "09:00"},
+            {"end-time": "09:30"},
+        ]
+        for changes in invalid:
+            with self.subTest(changes=changes):
+                self.assert_status(self.client.post(
+                    reverse("createCourse"), self.course_data(**changes),
+                ), 400)
+        data = self.course_data()
+        del data["day-mon"]
+        del data["day-wed"]
+        self.assert_status(self.client.post(reverse("createCourse"), data), 400)
+        self.assertEqual(Course.objects.count(), 2)
+        self.assertEqual(CourseMeeting.objects.count(), 0)
+
+    def test_create_lecture_saves_inputs_and_initial_attendance_rows(self):
+        self.login_as(self.teacher_user)
+        self.assert_status(self.client.post(
+            reverse("createLecture"), self.lecture_data(),
+        ), 200)
+        lecture = Lecture.objects.get(
+            course_id=self.course, lecture_name="Newton's Laws",
+        )
+        self.assertRegex(lecture.qr_id, r"^[0-9]{8}$")
+        self.assertNotEqual(lecture.qr_id, self.lecture.qr_id)
+        self.assertEqual(
+            lecture.lecture_date.astimezone(self.chicago),
+            datetime(2026, 11, 12, 14, 35, tzinfo=self.chicago),
+        )
+        rows = QRCodeUpload.objects.filter(qr_id=lecture)
+        self.assertEqual(rows.count(), 2)
+        self.assertEqual(
+            {row.student_id for row in rows},
+            {self.student, self.second_student},
+        )
+        for row in rows:
+            self.assertFalse(row.attended)
+            self.assertFalse(row.image)
+            self.assertIsNone(row.uploaded_at)
+
+    def test_create_lecture_rejects_invalid_inputs_without_writes(self):
+        self.login_as(self.teacher_user)
+        for changes in (
+            {"choice": ""}, {"choice": "Missing course"},
+            {"lecture-name": ""}, {"lecture-name": "   "},
+            {"lecture-name": "x" * 21}, {"lecture-date": ""},
+            {"lecture-date": "2026-02-30T10:00"},
+        ):
+            with self.subTest(changes=changes):
+                self.assert_status(self.client.post(
+                    reverse("createLecture"), self.lecture_data(**changes),
+                ), 400)
+        self.assertEqual(Lecture.objects.count(), 2)
+        self.assertEqual(QRCodeUpload.objects.count(), 3)
+
+    def test_create_lecture_rejects_another_instructors_course(self):
+        self.login_as(self.teacher_user)
+        self.assert_status(self.client.post(
+            reverse("createLecture"),
+            self.lecture_data(**{"choice": self.other_course.course_name}),
+        ), 403)
+        self.assertEqual(Lecture.objects.count(), 2)
+
+    def test_duplicate_lecture_names_are_rejected_only_within_same_course(self):
+        self.login_as(self.teacher_user)
+        self.assert_status(self.client.post(
+            reverse("createLecture"),
+            self.lecture_data(**{"lecture-name": self.lecture.lecture_name}),
+        ), 400)
+        own_second_course = Course.objects.create(
+            course_id="99988", course_name="Second Own Course",
+            course_instructor=self.teacher,
+        )
+        self.assert_status(self.client.post(
+            reverse("createLecture"), self.lecture_data(**{
+                "choice": own_second_course.course_name,
+                "lecture-name": self.lecture.lecture_name,
+            }),
+        ), 200)
+
+    def test_upload_updates_existing_row_and_saves_file_and_time(self):
+        self.login_as(self.student_user)
+        row = QRCodeUpload.objects.get(student_id=self.student, qr_id=self.lecture)
+        original_pk = row.pk
+        original_count = QRCodeUpload.objects.count()
+        self.assert_status(self.client.post(reverse("createQRCodeUpload"), {
+            "qr-id": self.lecture.qr_id, "imageUpload": self.image_file(),
+        }), 200)
+        row.refresh_from_db()
+        self.assertEqual(row.pk, original_pk)
+        self.assertEqual(QRCodeUpload.objects.count(), original_count)
+        self.assertTrue(row.attended)
+        self.assertIsNotNone(row.uploaded_at)
+        self.assertTrue(row.image.storage.exists(row.image.name))
+        other_row = QRCodeUpload.objects.get(
+            student_id=self.second_student, qr_id=self.lecture,
+        )
+        self.assertFalse(other_row.attended)
+        self.assertIsNone(other_row.uploaded_at)
+
+    def test_upload_requires_file_lecture_and_existing_student_record(self):
+        self.login_as(self.second_user)
+        for data in (
+            {"qr-id": self.lecture.qr_id},
+            {"imageUpload": self.image_file()},
+            {"qr-id": "00000000", "imageUpload": self.image_file()},
+            # A different student's row exists, but this student's does not.
+            {"qr-id": self.other_lecture.qr_id, "imageUpload": self.image_file()},
+        ):
+            with self.subTest(fields=list(data)):
+                self.assert_status(self.client.post(
+                    reverse("createQRCodeUpload"), data,
+                ), 400)
+        self.assertEqual(QRCodeUpload.objects.count(), 3)
+        self.assertFalse(QRCodeUpload.objects.filter(attended=True).exists())
+
+    def test_dump_uploads_returns_submitted_first_with_exact_keys(self):
+        timestamp = datetime(2026, 11, 10, 9, 25, tzinfo=self.chicago)
+        QRCodeUpload.objects.filter(
+            student_id=self.second_student, qr_id=self.lecture,
+        ).update(attended=True, uploaded_at=timestamp)
+        self.login_as(self.teacher_user)
+        response = self.client.get(reverse("dumpUploads"), {
+            "qr-id": self.lecture.qr_id,
+        })
+        self.assert_status(response, 200)
+        self.assertEqual(response.json(), [
+            {"username": "z_uploaded", "upload_time": "2026-11-10 09:25:00"},
+            {"username": "a_missing", "upload_time": None},
+        ])
+
+    def test_dump_uploads_rejects_missing_unknown_or_other_instructors_lecture(self):
+        self.login_as(self.teacher_user)
+        for data, status in (
+            ({}, 400),
+            ({"qr-id": "00000000"}, 400),
+            ({"qr-id": self.other_lecture.qr_id}, 403),
+        ):
+            with self.subTest(data=data):
+                self.assert_status(self.client.get(reverse("dumpUploads"), data), status)
+
+    def test_complete_lecture_upload_and_report_workflow(self):
+        self.login_as(self.teacher_user)
+        self.assert_status(self.client.post(
+            reverse("createLecture"), self.lecture_data(),
+        ), 200)
+        lecture = Lecture.objects.get(
+            course_id=self.course, lecture_name="Newton's Laws",
+        )
+        self.login_as(self.second_user)
+        self.assert_status(self.client.post(reverse("createQRCodeUpload"), {
+            "qr-id": lecture.qr_id, "imageUpload": self.image_file(),
+        }), 200)
+        self.login_as(self.teacher_user)
+        response = self.client.get(reverse("dumpUploads"), {"qr-id": lecture.qr_id})
+        self.assert_status(response, 200)
+        data = response.json()
+        self.assertEqual(len(data), 2)
+        self.assertEqual(data[0]["username"], self.second_user.username)
+        self.assertIsNotNone(data[0]["upload_time"])
+        self.assertEqual(data[1], {
+            "username": self.student_user.username, "upload_time": None,
+        })
+
+
+
+
+

@@ -15,7 +15,7 @@ Entities
 - Lecture         : a single class meeting (has a QR-code identifier)
 - QRCodeUpload    : a student's uploaded QR-code photograph
 """
-
+ 
 from django.db import models
 from django.contrib.auth.models import User
 from django.core.validators import MinLengthValidator
@@ -68,20 +68,37 @@ class Student_Profile(models.Model):
 # ---------------------------------------------------------------------------
 
 class Course(models.Model):
-    '''
-`   Table for the course, there ID, name and instructor ID (FK from profile),
-and the courses' meeting schedule
-    '''
     course_id = models.CharField(
         max_length=5,
         validators=[MinLengthValidator(5)],
         primary_key=True,
     )
     course_name = models.CharField(max_length=20)
-    course_instructor = models.ForeignKey(Instructor_Profile,
-                                          on_delete=models.SET_NULL,
-                                          null=True)
-    meeting_schedule = models.CharField(max_length=100)
+    course_instructor = models.ForeignKey(
+        Instructor_Profile,
+        on_delete=models.SET_NULL,
+        null=True,
+    )
+
+
+class CourseMeeting(models.Model):
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.CASCADE,
+        related_name="meetings",
+    )
+    day = models.CharField(
+        max_length=3,
+        choices=[
+            ("mon", "Monday"),
+            ("tue", "Tuesday"),
+            ("wed", "Wednesday"),
+            ("thu", "Thursday"),
+            ("fri", "Friday"),
+        ],
+    )
+    start_time = models.TimeField()
+    end_time = models.TimeField()
     
                                     
     
@@ -150,7 +167,7 @@ class QRCodeUpload(models.Model):
                               )
     attended = models.BooleanField(default=False)
     image = models.FileField(upload_to="qr_uploads/")
-    uploaded_at = models.DateTimeField(auto_now_add=True)
+    uploaded_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         '''

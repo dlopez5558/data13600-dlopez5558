@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<body>
+    <h1>Upload a QR image</h1>
+
+    <form method="post"
+          action="{% url 'createQRCodeUpload' %}"
+          enctype="multipart/form-data">
+        {% csrf_token %}
+
+        <p>
+            <label for="qr-id">Lecture:</label>
+            <select id="qr-id" name="qr-id" required>
+                <option value="">Select a lecture</option>
+                {% for record in records %}
+                    <option value="{{ record.qr_id.pk }}">
+                        {{ record.qr_id.course_id.course_name }} —
+                        {{ record.qr_id.lecture_name }}
+                    </option>
+                {% endfor %}
+            </select>
+        </p>
+
+        <p>
+            <label for="imageUpload">QR code image:</label>
+            <input type="file" id="imageUpload" name="imageUpload"
+                   accept="image/*" required>
+        </p>
+
+        <button type="submit">Upload</button>
+    </form>
+</body>
+</html>

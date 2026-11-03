@@ -50,7 +50,7 @@ def sum_view(request):
 # HW4  — user creation
 # ---------------------------------------------------------------------------
 
-from .models import Student_Profile, Instructor_Profile
+from .models import *
 
 def index(request):
     """
@@ -145,6 +145,342 @@ def createUser(request):
 # HW5  — courses, lectures, QR uploads, dump
 # ---------------------------------------------------------------------------
 
+@csrf_exempt
+def createCourse(request):
+    '''
+    Takes in a post request from an instructor to add a course and adds the
+    course to the database.
+    '''
+    if request.method != "POST":
+        return HttpResponseBadRequest("Only POST requests are allowed.")
+
+    if not request.user.is_authenticated:
+        return HttpResponse("Instructor login required.", status=401)
+
+    try:
+        instructor = Instructor_Profile.objects.get(user=request.user)
+    except Instructor_Profile.DoesNotExist:
+        return HttpResponse("Instructor login required.", status=401)
+
+
+    course_name = request.POST.get("course-name", "").strip()
+    start_time = request.POST.get("start-time", "")
+    end_time = request.POST.get("end-time", "")
+    course_id = request.POST.get("course-id", "").strip()
+
+    if len(course_id) != 5:
+        return HttpResponseBadRequest(
+            "Course ID must be exactly 5 characters."
+        )
+
+    if Course.objects.filter(course_id=course_id).exists():
+        return HttpResponseBadRequest("This course ID is already taken.")
+
+    days = [
+        day
+        for day in ["mon", "tue", "wed", "thu", "fri"]
+        if f"day-{day}" in request.POST
+    ]
+
+    # Make sure the inputs are consistent with models.py
+    if not course_name or len(course_name) > 20:
+        return HttpResponseBadRequest(
+            "Course name must be between 1 and 20 characters."
+        )
+
+    if Course.objects.filter(course_name=course_name).exists():
+        return HttpResponseBadRequest("This course name is already taken.")
+
+    if not days:
+        return HttpResponseBadRequest("Select at least one day.")
+
+    try:
+        start = datetime.strptime(start_time, "%H:%M").time()
+        end = datetime.strptime(end_time, "%H:%M").time()
+    except ValueError:
+        return HttpResponseBadRequest(
+            "Provide valid start and end times."
+        )
+
+    if end <= start:
+        return HttpResponseBadRequest(
+            "End time must be after start time."
+        )
+
+
+
+    # Save the course.
+    course = Course.objects.create(
+        course_id=course_id,
+        course_name=course_name,
+        course_instructor=instructor,
+    )
+
+    # Save one meeting for each selected day.
+    for day in days:
+        CourseMeeting.objects.create(
+            course=course,
+            day=day,
+            start_time=start,
+            end_time=end,
+        )
+
+    return HttpResponse(
+        f"Course created. ID: {course.course_id}",
+        status=200,
+    )
+
+
+import random
+
+@csrf_exempt
+def createLecture(request):
+    '''
+    Creates a lecture for a course owned by the logged-in instructor.
+    Lecture names must be unique within that course.
+    Generates a random eight-digit QR identifier.
+    '''
+    if request.method != "POST":
+        return HttpResponseBadRequest("Only POST requests are allowed.")
+
+    if not request.user.is_authenticated:
+        return HttpResponse("Instructor login required.", status=401)
+
+    try:
+        instructor = Instructor_Profile.objects.get(user=request.user)
+    except Instructor_Profile.DoesNotExist:
+        return HttpResponse("Instructor login required.", status=401)
+
+    course_name = request.POST.get("choice", "").strip()
+    lecture_name = request.POST.get("lecture-name", "").strip()
+    lecture_date_text = request.POST.get("lecture-date", "")
+
+    try:
+        lecture_date = datetime.strptime(
+            lecture_date_text, "%Y-%m-%dT%H:%M"
+        ).replace(tzinfo=CDT)
+    except ValueError:
+        return HttpResponseBadRequest(
+            "Provide a valid lecture date and time."
+        )
+
+    if not course_name:
+        return HttpResponseBadRequest("Select a course.")
+
+    if not lecture_name or len(lecture_name) > 20:
+        return HttpResponseBadRequest(
+            "Lecture name must be between 1 and 20 characters."
+        )
+
+    try:
+        course = Course.objects.get(course_name=course_name)
+    except Course.DoesNotExist:
+        return HttpResponseBadRequest("Course does not exist.")
+    except Course.MultipleObjectsReturned:
+        return HttpResponseBadRequest(
+            "Course name is ambiguous. Please resolve duplicate course names."
+        )
+
+    if course.course_instructor != instructor:
+        return HttpResponseForbidden(
+            "You can only create lectures for your own courses."
+        )
+
+    if Lecture.objects.filter(
+        course_id=course,
+        lecture_name=lecture_name,
+    ).exists():
+        return HttpResponseBadRequest(
+            "A lecture with this name already exists in this course."
+        )
+
+    while True:
+        qr_id = str(random.randint(0, 99999999)).zfill(8)
+        if not Lecture.objects.filter(qr_id=qr_id).exists():
+            break
+
+    lecture = Lecture.objects.create(
+        lecture_name=lecture_name,
+        lecture_date=lecture_date,
+        course_id=course,
+        qr_id=qr_id,
+    )
+
+    # When we make a lecture, add a row to QR Uploads for every student and set
+    # attended to False
+    enrollments = Enrollment.objects.filter(course_id=course)
+
+    for enrollment in enrollments:
+        QRCodeUpload.objects.create(
+            student_id=enrollment.student_id,
+            qr_id=lecture,
+            attended=False,
+            image="",
+        )
+
+    return HttpResponse(
+        f"Lecture created. QR ID: {lecture.qr_id}",
+        status=200,
+    )
+
+    
+@csrf_exempt
+def createQRCodeUpload(request):
+    '''
+    When a student scans the qr code, look for the right student-id, qr row that should already
+    be in QR Code upload, and change attended from false to true.
+    '''
+    if request.method != "POST":
+        return HttpResponseBadRequest("Only POST requests are allowed.")
+
+    if not request.user.is_authenticated:
+        return HttpResponse("Student login required.", status=401)
+
+    try:
+        student = Student_Profile.objects.get(user=request.user)
+    except Student_Profile.DoesNotExist:
+        return HttpResponse("Student login required.", status=401)
+
+    image = request.FILES.get("imageUpload")
+    qr_id = request.POST.get("qr-id", "").strip()
+
+    if not image:
+        return HttpResponseBadRequest("Upload an image.")
+
+    if not qr_id:
+        return HttpResponseBadRequest("Select a lecture.")
+
+    try:
+        upload = QRCodeUpload.objects.get(
+            student_id=student,
+            qr_id=qr_id,
+        )
+    except QRCodeUpload.DoesNotExist:
+        return HttpResponseBadRequest(
+            "No attendance record exists for this student and lecture."
+        )
+
+    upload.image = image
+    upload.attended = True
+    upload.uploaded_at = datetime.now(CDT)
+    upload.save(update_fields=["image", "attended", "uploaded_at"])
+
+    return HttpResponse("Attendance recorded.", status=200)
+
+
+def dumpUploads(request):
+    '''
+    Lets the instructor get the data on all student qr code uploads. Returns rows where the
+    student uploaded the qr code on top and where the didn't on bottom.
+    '''
+    if request.method != "GET":
+        return HttpResponseBadRequest("Only GET requests are allowed.")
+
+    if not request.user.is_authenticated:
+        return HttpResponse("Instructor login required.", status=401)
+
+    try:
+        instructor = Instructor_Profile.objects.get(user=request.user)
+    except Instructor_Profile.DoesNotExist:
+        return HttpResponse("Instructor login required.", status=401)
+
+    qr_id = request.GET.get("qr-id", "").strip()
+
+    if not qr_id:
+        return HttpResponseBadRequest("Select a lecture.")
+
+    try:
+        lecture = Lecture.objects.get(qr_id=qr_id)
+    except Lecture.DoesNotExist:
+        return HttpResponseBadRequest("Lecture does not exist.")
+
+    if lecture.course_id.course_instructor != instructor:
+        return HttpResponseForbidden(
+            "You can only view uploads for your own courses."
+        )
+
+    records = (
+        QRCodeUpload.objects
+        .filter(qr_id=lecture)
+        .select_related("student_id__user")
+        .order_by("-attended", "student_id__user__username")
+    )
+
+    data = []
+
+    for record in records:
+        upload_time = None
+
+        if record.attended and record.uploaded_at:
+            upload_time = record.uploaded_at.astimezone(CDT).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+
+        data.append({
+            "username": record.student_id.user.username,
+            "upload_time": upload_time,
+        })
+
+    return JsonResponse(data, safe=False)
+
+
+def new_course(request):
+    '''
+    Checks if the user is an instructor and displays the course form.
+    '''
+    if request.method != "GET":
+        return HttpResponseBadRequest("Only GET requests are allowed.")
+
+    if (
+        not request.user.is_authenticated
+        or not Instructor_Profile.objects.filter(user=request.user).exists()
+    ):
+        return HttpResponse("Instructor login required.", status=401)
+
+    return render(request, "app/new_course.html")
+
+
+
+def new_lecture(request):
+    '''
+    Checks if the user is an instructor and displays the lecture form
+    '''
+    if request.method != "GET":
+        return HttpResponseBadRequest("Only GET requests are allowed.")
+
+    if (
+        not request.user.is_authenticated
+        or not Instructor_Profile.objects.filter(user=request.user).exists()
+    ):
+        return HttpResponse("Instructor login required.", status=401)
+
+    courses = Course.objects.filter(
+        course_instructor__user=request.user
+    )
+
+    return render(request, "app/new_lecture.html", {"courses": courses})
+
+
+def new_qr_upload(request):
+    '''
+    Checks that the user is a student, and supplies the associated lectures to the upload
+    form’s dropdown.
+    '''
+    if request.method != "GET":
+        return HttpResponseBadRequest("Only GET requests are allowed.")
+
+    if (
+        not request.user.is_authenticated
+        or not Student_Profile.objects.filter(user=request.user).exists()
+    ):
+        return HttpResponse("Student login required.", status=401)
+
+    records = QRCodeUpload.objects.filter(
+        student_id__user=request.user,
+        qr_id__isnull=False,
+    ).select_related("qr_id")
+
+    return render(request, "app/new_qr_upload.html", {"records": records})
 
 
 # ---------------------------------------------------------------------------
