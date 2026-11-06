@@ -168,13 +168,22 @@ def createCourse(request):
     end_time = request.POST.get("end-time", "")
     course_id = request.POST.get("course-id", "").strip()
 
-    if len(course_id) != 5:
-        return HttpResponseBadRequest(
-            "Course ID must be exactly 5 characters."
-        )
+    if course_id:
+        if len(course_id) != 5:
+            return HttpResponseBadRequest(
+                "Course ID must be exactly 5 characters."
+            )
 
-    if Course.objects.filter(course_id=course_id).exists():
-        return HttpResponseBadRequest("This course ID is already taken.")
+        if Course.objects.filter(course_id=course_id).exists():
+            return HttpResponseBadRequest(
+                "This course ID is already taken."
+            )
+    else:
+        while True:
+            course_id = str(random.randint(0, 99999)).zfill(5)
+
+            if not Course.objects.filter(course_id=course_id).exists():
+                break
 
     days = [
         day
@@ -182,7 +191,6 @@ def createCourse(request):
         if f"day-{day}" in request.POST
     ]
 
-    # Make sure the inputs are consistent with models.py
     if not course_name or len(course_name) > 20:
         return HttpResponseBadRequest(
             "Course name must be between 1 and 20 characters."
@@ -209,14 +217,12 @@ def createCourse(request):
 
 
 
-    # Save the course.
     course = Course.objects.create(
         course_id=course_id,
         course_name=course_name,
         course_instructor=instructor,
     )
 
-    # Save one meeting for each selected day.
     for day in days:
         CourseMeeting.objects.create(
             course=course,
@@ -255,22 +261,27 @@ def createLecture(request):
     lecture_name = request.POST.get("lecture-name", "").strip()
     lecture_date_text = request.POST.get("lecture-date", "")
 
-    try:
-        lecture_date = datetime.strptime(
-            lecture_date_text, "%Y-%m-%dT%H:%M"
-        ).replace(tzinfo=CDT)
-    except ValueError:
-        return HttpResponseBadRequest(
-            "Provide a valid lecture date and time."
-        )
+    if lecture_date_text:
+        try:
+            lecture_date = datetime.strptime(
+                lecture_date_text, "%Y-%m-%dT%H:%M"
+            ).replace(tzinfo=CDT)
+        except ValueError:
+            return HttpResponseBadRequest(
+                "Provide a valid lecture date and time."
+            )
+        
+    else:
+        lecture_date = datetime.now(CDT)
 
     if not course_name:
         return HttpResponseBadRequest("Select a course.")
 
-    if not lecture_name or len(lecture_name) > 20:
+
+    if len(lecture_name) > 20:
         return HttpResponseBadRequest(
-            "Lecture name must be between 1 and 20 characters."
-        )
+            "Lecture name must be 20 characters or fewer."
+        )    
 
     try:
         course = Course.objects.get(course_name=course_name)
@@ -285,6 +296,17 @@ def createLecture(request):
         return HttpResponseForbidden(
             "You can only create lectures for your own courses."
         )
+
+    if not lecture_name:
+        number = Lecture.objects.filter(course_id=course).count() + 1
+        lecture_name = f"Lecture {number}"
+
+        while Lecture.objects.filter(
+            course_id=course,
+            lecture_name=lecture_name,
+        ).exists():
+            number += 1
+            lecture_name = f"Lecture {number}"
 
     if Lecture.objects.filter(
         course_id=course,
@@ -347,25 +369,29 @@ def createQRCodeUpload(request):
     if not image:
         return HttpResponseBadRequest("Upload an image.")
 
-    if not qr_id:
-        return HttpResponseBadRequest("Select a lecture.")
-
-    try:
-        upload = QRCodeUpload.objects.get(
+    if qr_id:
+        try:
+            upload = QRCodeUpload.objects.get(
+                student_id=student,
+                qr_id=qr_id,
+            )
+        except QRCodeUpload.DoesNotExist:
+            return HttpResponseBadRequest(
+                "No attendance record exists for this student and lecture."
+            )
+    else:
+        upload = QRCodeUpload(
             student_id=student,
-            qr_id=qr_id,
+            qr_id=None,
         )
-    except QRCodeUpload.DoesNotExist:
-        return HttpResponseBadRequest(
-            "No attendance record exists for this student and lecture."
-        )
+
 
     upload.image = image
     upload.attended = True
     upload.uploaded_at = datetime.now(CDT)
-    upload.save(update_fields=["image", "attended", "uploaded_at"])
+    upload.save()
 
-    return HttpResponse("Attendance recorded.", status=200)
+    return HttpResponse("QR code uploaded.", status=200)
 
 
 def dumpUploads(request):
@@ -386,25 +412,29 @@ def dumpUploads(request):
 
     qr_id = request.GET.get("qr-id", "").strip()
 
-    if not qr_id:
-        return HttpResponseBadRequest("Select a lecture.")
-
-    try:
-        lecture = Lecture.objects.get(qr_id=qr_id)
-    except Lecture.DoesNotExist:
-        return HttpResponseBadRequest("Lecture does not exist.")
-
-    if lecture.course_id.course_instructor != instructor:
-        return HttpResponseForbidden(
-            "You can only view uploads for your own courses."
-        )
-
     records = (
         QRCodeUpload.objects
-        .filter(qr_id=lecture)
         .select_related("student_id__user")
         .order_by("-attended", "student_id__user__username")
     )
+
+    if qr_id:
+        try:
+            lecture = Lecture.objects.get(qr_id=qr_id)
+        except Lecture.DoesNotExist:
+            return HttpResponseBadRequest("Lecture does not exist.")
+
+        if lecture.course_id.course_instructor != instructor:
+            return HttpResponseForbidden(
+                "You can only view uploads for your own courses."
+            )
+
+        records = records.filter(qr_id=lecture)
+    else:
+        records = records.filter(
+            attended=True,
+            uploaded_at__isnull=False,
+        )
 
     data = []
 
@@ -422,6 +452,8 @@ def dumpUploads(request):
         })
 
     return JsonResponse(data, safe=False)
+
+
 
 
 def new_course(request):
