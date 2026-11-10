@@ -69,8 +69,7 @@ class Student_Profile(models.Model):
 
 class Course(models.Model):
     course_id = models.CharField(
-        max_length=5,
-        validators=[MinLengthValidator(5)],
+        max_length=20,
         primary_key=True,
     )
     course_name = models.CharField(max_length=20)
@@ -79,6 +78,14 @@ class Course(models.Model):
         on_delete=models.SET_NULL,
         null=True,
     )
+    mon = models.BooleanField(default=False)
+    tue = models.BooleanField(default=False)
+    wed = models.BooleanField(default=False)
+    thu = models.BooleanField(default=False)
+    fri = models.BooleanField(default=False)
+
+    start_time = models.TimeField(null=True)
+    end_time = models.TimeField(null=True)
 
 
 class CourseMeeting(models.Model):
@@ -187,4 +194,68 @@ class QRCodeUpload(models.Model):
 # ---------------------------------------------------------------------------
 
 
+from zoneinfo import ZoneInfo
+
+def getUploadsForCourse(course):
+    '''
+    Takes a course referring to a course id (like DATA13600) and returns a list
+    of QR code upload objects associated with the course
+    '''
+
+    # Checks if course matches a course_id in Course.
+    try:
+        course_obj = Course.objects.get(course_id=course)
+    except Course.DoesNotExist:
+        return []
+
+    # search the database for lectures associated with the course and
+    # qr uploads associated with the lectures
+    lecture_ids = Lecture.objects.filter(
+    course_id=course
+    ).values_list("qr_id", flat=True)
+    
+    uploads = QRCodeUpload.objects.filter(
+    qr_id__in=lecture_ids
+    )
+
+    if course_obj.start_time is None or course_obj.end_time is None:
+        return []
+
+    meeting_days = [
+        course_obj.mon,
+        course_obj.tue,
+        course_obj.wed,
+        course_obj.thu,
+        course_obj.fri,
+        False,  
+        False,  
+    ]
+
+    chicago = ZoneInfo("America/Chicago")
+    valid_uploads = []
+
+    for upload in uploads:
+        if upload.uploaded_at is None:
+            continue
+
+        local_timestamp = upload.uploaded_at.astimezone(chicago)
+
+        if not meeting_days[local_timestamp.weekday()]:
+            continue
+
+        if (
+            course_obj.start_time
+            <= local_timestamp.time()
+            <= course_obj.end_time
+        ):
+            valid_uploads.append(upload)
+
+    return valid_uploads
+
+    
+
+            
+    
+    
+    
 

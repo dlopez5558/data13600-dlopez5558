@@ -1,5 +1,9 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Create a course — AttendanceChimp</title>
+</head>
 <body>
     <h1>Create a course</h1>
 
@@ -8,35 +12,75 @@
 
         <p>
             <label for="course-name">Course name:</label>
-            <input type="text" id="course-name" name="course-name"
-                   maxlength="20" required>
+            <input type="text"
+                   id="course-name"
+                   name="course-name"
+                   maxlength="20"
+                   required>
         </p>
 
         <p>
             <label for="course-id">Course ID:</label>
-            <input type="text" id="course-id" name="course-id"
-                   minlength="5" maxlength="5" required>
+            <input type="text"
+                   id="course-id"
+                   name="course-id"
+                   maxlength="20"
+                   placeholder="DATA13600"
+                   required>
         </p>
 
         <p>
             <label for="start-time">Start time:</label>
-            <input type="time" id="start-time" name="start-time" required>
+            <input type="time"
+                   id="start-time"
+                   name="start-time"
+                   required>
         </p>
 
         <p>
             <label for="end-time">End time:</label>
-            <input type="time" id="end-time" name="end-time" required>
+            <input type="time"
+                   id="end-time"
+                   name="end-time"
+                   required>
         </p>
 
-        <p>Meeting days:</p>
+        <fieldset>
+            <legend>Meeting days — select at least one:</legend>
 
-        <label><input type="checkbox" name="day-mon" value="1"> Monday</label>
-        <label><input type="checkbox" name="day-tue" value="1"> Tuesday</label>
-        <label><input type="checkbox" name="day-wed" value="1"> Wednesday</label>
-        <label><input type="checkbox" name="day-thu" value="1"> Thursday</label>
-        <label><input type="checkbox" name="day-fri" value="1"> Friday</label>
+            <label>
+                <input type="checkbox" name="day-mon">
+                Monday
+            </label>
+            <br>
 
-        <p><button type="submit">Create course</button></p>
+            <label>
+                <input type="checkbox" name="day-tue">
+                Tuesday
+            </label>
+            <br>
+
+            <label>
+                <input type="checkbox" name="day-wed">
+                Wednesday
+            </label>
+            <br>
+
+            <label>
+                <input type="checkbox" name="day-thu">
+                Thursday
+            </label>
+            <br>
+
+            <label>
+                <input type="checkbox" name="day-fri">
+                Friday
+            </label>
+        </fieldset>
+
+        <p>
+            <button type="submit">Create course</button>
+        </p>
     </form>
 </body>
 </html>

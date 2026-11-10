@@ -145,12 +145,10 @@ def createUser(request):
 # HW5  — courses, lectures, QR uploads, dump
 # ---------------------------------------------------------------------------
 
+
 @csrf_exempt
 def createCourse(request):
-    '''
-    Takes in a post request from an instructor to add a course and adds the
-    course to the database.
-    '''
+    """Create a course with the instructor's chosen weekly schedule."""
     if request.method != "POST":
         return HttpResponseBadRequest("Only POST requests are allowed.")
 
@@ -162,29 +160,12 @@ def createCourse(request):
     except Instructor_Profile.DoesNotExist:
         return HttpResponse("Instructor login required.", status=401)
 
-
     course_name = request.POST.get("course-name", "").strip()
+    course_id = request.POST.get("course-id", "").strip()
     start_time = request.POST.get("start-time", "")
     end_time = request.POST.get("end-time", "")
-    course_id = request.POST.get("course-id", "").strip()
 
-    if course_id:
-        if len(course_id) != 5:
-            return HttpResponseBadRequest(
-                "Course ID must be exactly 5 characters."
-            )
-
-        if Course.objects.filter(course_id=course_id).exists():
-            return HttpResponseBadRequest(
-                "This course ID is already taken."
-            )
-    else:
-        while True:
-            course_id = str(random.randint(0, 99999)).zfill(5)
-
-            if not Course.objects.filter(course_id=course_id).exists():
-                break
-
+    # Read the selected weekday checkboxes.
     days = [
         day
         for day in ["mon", "tue", "wed", "thu", "fri"]
@@ -197,11 +178,31 @@ def createCourse(request):
         )
 
     if Course.objects.filter(course_name=course_name).exists():
-        return HttpResponseBadRequest("This course name is already taken.")
+        return HttpResponseBadRequest(
+            "This course name is already taken."
+        )
+
+    if course_id:
+        if len(course_id) > 20:
+            return HttpResponseBadRequest(
+                "Course ID must be 20 characters or fewer."
+            )
+
+        if Course.objects.filter(course_id=course_id).exists():
+            return HttpResponseBadRequest(
+                "This course ID is already taken."
+            )
+    else:
+        # Preserve support for HW5 requests that omit the course ID.
+        while True:
+            course_id = str(random.randint(0, 99999)).zfill(5)
+            if not Course.objects.filter(course_id=course_id).exists():
+                break
 
     if not days:
         return HttpResponseBadRequest("Select at least one day.")
 
+    # Convert the form's HH:MM strings into time objects.
     try:
         start = datetime.strptime(start_time, "%H:%M").time()
         end = datetime.strptime(end_time, "%H:%M").time()
@@ -215,21 +216,18 @@ def createCourse(request):
             "End time must be after start time."
         )
 
-
-
     course = Course.objects.create(
         course_id=course_id,
         course_name=course_name,
         course_instructor=instructor,
+        mon="mon" in days,
+        tue="tue" in days,
+        wed="wed" in days,
+        thu="thu" in days,
+        fri="fri" in days,
+        start_time=start,
+        end_time=end,
     )
-
-    for day in days:
-        CourseMeeting.objects.create(
-            course=course,
-            day=day,
-            start_time=start,
-            end_time=end,
-        )
 
     return HttpResponse(
         f"Course created. ID: {course.course_id}",
@@ -519,5 +517,46 @@ def new_qr_upload(request):
 # HW6  — getUploads
 # ---------------------------------------------------------------------------
 
+from django.http import JsonResponse
 
+
+def getUploads(request):
+    '''
+    Takes a get request and displays the valid qr uploads for a given course
+    '''
+    if request.method != "GET":
+        return HttpResponseBadRequest("Only GET requests are allowed.")
+
+    if (
+        not request.user.is_authenticated
+        or not Instructor_Profile.objects.filter(user=request.user).exists()
+    ):
+        return HttpResponse("Instructor login required.", status=401)
+
+    course = request.GET.get("course", "").strip()
+
+    if not course:
+        return JsonResponse(
+            {"error": "Missing course parameter"},
+            status=400,
+        )
+
+    uploads = getUploadsForCourse(course)
+
+    data = []
+
+    for upload in uploads:
+        data.append({
+            "username": upload.student_id.user.username,
+            "upload_time": upload.uploaded_at.astimezone(CDT).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            ),
+        })
+
+    return JsonResponse(data, safe=False)    
+    
+
+    
+
+    
 
