@@ -182,27 +182,24 @@ def createCourse(request):
             "This course name is already taken."
         )
 
-    if course_id:
-        if len(course_id) > 20:
-            return HttpResponseBadRequest(
-                "Course ID must be 20 characters or fewer."
-            )
 
-        if Course.objects.filter(course_id=course_id).exists():
-            return HttpResponseBadRequest(
-                "This course ID is already taken."
-            )
-    else:
-        # Preserve support for HW5 requests that omit the course ID.
-        while True:
-            course_id = str(random.randint(0, 99999)).zfill(5)
-            if not Course.objects.filter(course_id=course_id).exists():
-                break
+    if not course_id:
+        course_id = course_name
+
+    if len(course_id) > 20:
+        return HttpResponseBadRequest(
+            "Course ID must be 20 characters or fewer."
+        )
+
+    if Course.objects.filter(course_id=course_id).exists():
+        return HttpResponseBadRequest(
+            "This course ID is already taken."
+        )    
 
     if not days:
         return HttpResponseBadRequest("Select at least one day.")
 
-    # Convert the form's HH:MM strings into time objects.
+ 
     try:
         start = datetime.strptime(start_time, "%H:%M").time()
         end = datetime.strptime(end_time, "%H:%M").time()
