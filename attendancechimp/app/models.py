@@ -176,17 +176,6 @@ class QRCodeUpload(models.Model):
     image = models.FileField(upload_to="qr_uploads/")
     uploaded_at = models.DateTimeField(null=True, blank=True)
 
-    class Meta:
-        '''
-        Prevents duplicate attendance registration
-        '''
-        constraints = [
-            models.UniqueConstraint(
-                fields=["student_id", "qr_id"],
-                name="unique_student_lecture",
-            )
-        ]
-
 
 
 # ---------------------------------------------------------------------------

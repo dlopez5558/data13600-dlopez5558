@@ -367,20 +367,27 @@ def createQRCodeUpload(request):
     if not image:
         return HttpResponseBadRequest("Upload an image.")
 
+    lecture = None
+    upload = None
+
     if qr_id:
         try:
-            upload = QRCodeUpload.objects.get(
-                student_id=student,
-                qr_id=qr_id,
-            )
-        except QRCodeUpload.DoesNotExist:
-            return HttpResponseBadRequest(
-                "No attendance record exists for this student and lecture."
-            )
-    else:
+            lecture = Lecture.objects.get(qr_id=qr_id)
+        except Lecture.DoesNotExist:
+            return HttpResponseBadRequest("Lecture does not exist.")
+
+        # Reuse an existing placeholder for the first submission.
+        upload = QRCodeUpload.objects.filter(
+            student_id=student,
+            qr_id=lecture,
+            attended=False,
+            uploaded_at__isnull=True,
+        ).first()
+
+    if upload is None:
         upload = QRCodeUpload(
             student_id=student,
-            qr_id=None,
+            qr_id=lecture,
         )
 
 
